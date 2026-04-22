@@ -3,129 +3,98 @@ import pandas as pd
 import numpy as np
 import pickle
 import plotly.graph_objects as go
-import plotly.express as px
+import os
 
-# Page Configuration
-st.set_page_config(page_title="Wine AI Pro", page_icon="🍷", layout="wide")
+# Page Config
+st.set_page_config(page_title="Wine Quality AI", page_icon="🍷", layout="wide")
 
-# Load Model & Data (Data is used for comparison charts)
+# Custom Styling
+st.markdown("""
+    <style>
+    .stButton>button { width: 100%; border-radius: 5px; height: 3em; background-color: #722F37; color: white; }
+    </style>
+    """, unsafe_allow_html=True)
+
 @st.cache_resource
 def load_assets():
+    # Load model and raw data for comparison
     with open('wine_model.pkl', 'rb') as f:
         model = pickle.load(f)
-    # Load dataset to get averages for the radar chart
     df = pd.read_csv('winequality-white.csv', sep=';')
     return model, df
 
-model, raw_df = load_assets()
+try:
+    model, raw_df = load_assets()
+except FileNotFoundError:
+    st.error("Error: 'wine_model.pkl' or 'winequality-white.csv' not found. Please upload them to your GitHub repo.")
+    st.stop()
 
-# --- SIDEBAR INPUTS ---
+# --- SIDEBAR: ALL 11 INPUTS ---
 st.sidebar.header("🧪 Chemical Analysis")
-def user_input_features():
-    # Using sliders with ranges based on typical white wine values
-    fixed_acidity = st.sidebar.slider("Fixed Acidity", 4.0, 14.0, 6.8)
-    volatile_acidity = st.sidebar.slider("Volatile Acidity", 0.1, 1.1, 0.27)
-    citric_acid = st.sidebar.slider("Citric Acid", 0.0, 1.0, 0.33)
-    residual_sugar = st.sidebar.slider("Residual Sugar", 0.6, 30.0, 6.3)
-    chlorides = st.sidebar.slider("Chlorides", 0.01, 0.3, 0.04)
-    free_sulfur_dioxide = st.sidebar.slider("Free Sulfur Dioxide", 2.0, 200.0, 35.0)
-    total_sulfur_dioxide = st.sidebar.slider("Total Sulfur Dioxide", 9.0, 400.0, 138.0)
-    density = st.sidebar.slider("Density", 0.987, 1.003, 0.994, step=0.001)
+def get_user_inputs():
+    # Ranges based on typical White Wine distribution
+    fa = st.sidebar.slider("Fixed Acidity", 3.8, 14.2, 6.8)
+    va = st.sidebar.slider("Volatile Acidity", 0.08, 1.1, 0.27)
+    ca = st.sidebar.slider("Citric Acid", 0.0, 1.66, 0.33)
+    rs = st.sidebar.slider("Residual Sugar", 0.6, 65.8, 6.3)
+    cl = st.sidebar.slider("Chlorides", 0.009, 0.34, 0.04)
+    fsd = st.sidebar.slider("Free Sulfur Dioxide", 2.0, 289.0, 35.0)
+    tsd = st.sidebar.slider("Total Sulfur Dioxide", 9.0, 440.0, 138.0)
+    de = st.sidebar.slider("Density", 0.987, 1.038, 0.994, step=0.001)
     ph = st.sidebar.slider("pH Level", 2.7, 3.8, 3.18)
-    sulphates = st.sidebar.slider("Sulphates", 0.2, 1.1, 0.49)
-    alcohol = st.sidebar.slider("Alcohol (%)", 8.0, 14.0, 10.5)
+    su = st.sidebar.slider("Sulphates", 0.2, 1.08, 0.49)
+    al = st.sidebar.slider("Alcohol (%)", 8.0, 14.2, 10.5)
     
-    # Preprocessing (Log transformation as per your notebook)
-    data = {
-        'fixed_acidity': fixed_acidity,
-        'volatile_acidity': np.log1p(volatile_acidity),
-        'citric_acid': np.log1p(citric_acid),
-        'residual_sugar': np.log1p(residual_sugar),
-        'chlorides': np.log1p(chlorides),
-        'free_sulfur_dioxide': np.log1p(free_sulfur_dioxide),
-        'total_sulfur_dioxide': total_sulfur_dioxide,
-        'density': np.log1p(density),
+    # Preprocess inputs to match model training (Log 1p)
+    processed_data = {
+        'fixed_acidity': fa,
+        'volatile_acidity': np.log1p(va),
+        'citric_acid': np.log1p(ca),
+        'residual_sugar': np.log1p(rs),
+        'chlorides': np.log1p(cl),
+        'free_sulfur_dioxide': np.log1p(fsd),
+        'total_sulfur_dioxide': tsd,
+        'density': np.log1p(de),
         'pH': ph,
-        'sulphates': np.log1p(sulphates),
-        'alcohol': alcohol
+        'sulphates': np.log1p(su),
+        'alcohol': al
     }
-    return pd.DataFrame(data, index=[0]), [fixed_acidity, volatile_acidity, citric_acid, residual_sugar, chlorides, free_sulfur_dioxide, total_sulfur_dioxide, density, ph, sulphates, alcohol]
+    return pd.DataFrame(processed_data, index=[0]), [fa, va, ca, rs, cl, fsd, tsd, de, ph, su, al]
 
-input_df, raw_values = user_input_features()
+input_df, raw_list = get_user_inputs()
 
 # --- MAIN PANEL ---
 st.title("🍷 Premium Wine Quality Predictor")
-st.write("Adjust the chemical properties in the sidebar to analyze the wine.")
-
 col1, col2 = st.columns([1, 1])
 
-# Column 1: Prediction & Gauge
 with col1:
-    st.subheader("Prediction Result")
-    prediction = model.predict(input_df)
-    probability = model.predict_proba(input_df)[0][1]
-
-    # Probability Gauge
-    fig_gauge = go.Figure(go.Indicator(
+    st.subheader("Analysis")
+    prob = model.predict_proba(input_df)[0][1]
+    pred = model.predict(input_df)[0]
+    
+    # Gauge Chart
+    fig = go.Figure(go.Indicator(
         mode = "gauge+number",
-        value = probability * 100,
-        domain = {'x': [0, 1], 'y': [0, 1]},
-        title = {'text': "Quality Confidence %", 'font': {'size': 24}},
-        gauge = {
-            'axis': {'range': [None, 100], 'tickwidth': 1, 'tickcolor': "darkblue"},
-            'bar': {'color': "#722F37"},
-            'bgcolor': "white",
-            'borderwidth': 2,
-            'bordercolor': "gray",
-            'steps': [
-                {'range': [0, 50], 'color': '#ffcccc'},
-                {'range': [50, 80], 'color': '#fff2cc'},
-                {'range': [80, 100], 'color': '#d9ead3'}],
-        }
+        value = prob * 100,
+        title = {'text': "Confidence Score (%)"},
+        gauge = {'bar': {'color': "#722F37"}, 'axis': {'range': [0, 100]}}
     ))
-    fig_gauge.update_layout(height=350, margin=dict(l=20, r=20, t=50, b=20))
-    st.plotly_chart(fig_gauge, use_container_width=True)
+    fig.update_layout(height=300)
+    st.plotly_chart(fig, use_container_width=True)
 
-    if prediction[0] == 1:
-        st.success("✨ **RESULT: This is a High Quality Wine!**")
+    if pred == 1:
+        st.success("✨ **RESULT: High Quality Wine**")
     else:
-        st.error("🧐 **RESULT: This is a Standard Quality Wine.**")
+        st.info("🧐 **RESULT: Standard Quality Wine**")
 
-# Column 2: Comparison Radar Chart
 with col2:
-    st.subheader("Chemical Profile Comparison")
+    st.subheader("Comparison Profile")
+    categories = ['Fixed Acid', 'Volatile Acid', 'Citric Acid', 'Sugar', 'Chlorides', 'Free SO2', 'Total SO2', 'Density', 'pH', 'Sulphates', 'Alcohol']
+    # Mean of good wines from your dataset for the radar
+    avg_good = raw_df[raw_df['quality'] > 6].mean().values[:11]
     
-    # Normalize values for a better radar chart view (Simplified)
-    categories = ['Fixed Acidity', 'Volatile Acid', 'Citric Acid', 'Residual Sugar', 'Chlorides', 'Free SO2', 'Total SO2', 'Density', 'pH', 'Sulphates', 'Alcohol']
-    
-    # Calculate Mean of "Good" Wines from dataset for comparison
-    good_wines_mean = raw_df[raw_df['quality'] > 6].mean().values[:11]
-    
-    fig_radar = go.Figure()
-
-    fig_radar.add_trace(go.Scatterpolar(
-        r=raw_values,
-        theta=categories,
-        fill='toself',
-        name='Your Wine',
-        line_color='#722F37'
-    ))
-    fig_radar.add_trace(go.Scatterpolar(
-        r=good_wines_mean,
-        theta=categories,
-        fill='toself',
-        name='Avg Good Wine',
-        line_color='#999999'
-    ))
-
-    fig_radar.update_layout(
-      polar=dict(radialaxis=dict(visible=False)),
-      showlegend=True,
-      height=400,
-      margin=dict(l=40, r=40, t=40, b=40)
-    )
-    st.plotly_chart(fig_radar, use_container_width=True)
-
-# Bottom section: Data Summary
-with st.expander("See input data summary"):
-    st.table(input_df)
+    radar = go.Figure()
+    radar.add_trace(go.Scatterpolar(r=raw_list, theta=categories, fill='toself', name='Your Wine', line_color='#722F37'))
+    radar.add_trace(go.Scatterpolar(r=avg_good, theta=categories, fill='toself', name='Avg Premium', line_color='#999999'))
+    radar.update_layout(polar=dict(radialaxis=dict(visible=False)), height=400)
+    st.plotly_chart(radar, use_container_width=True)
